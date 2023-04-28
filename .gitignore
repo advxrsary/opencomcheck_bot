@@ -1,0 +1,6 @@
+*
+
+!.gitignore
+!main.py
+!README.md
+!.env.example

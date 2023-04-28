@@ -7,20 +7,26 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.utils import executor
 from telethon import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-
-
 
 BANNER = """
 Welcome to the Channel Comment Checker Bot!
 
-This bot can check if a Telegram channel has an open comments section. You can use the following commands:
+This bot can check if a Telegram channel has an open comments section. You can either send a list of channels or a file containing a list of channels, and the bot will check if they have open comments sections.
 
-/start - Begins the interaction with the user (you already used it!)
-/help - Shows this help message
-/list - Send a list of channels to the bot, and it will check if they have open comments sections
-/file - Send a file containing a list of channels, and the bot will check if they have open comments sections
+To use the bot:
+1. Send a message with a list of channels (e.g. @channel1 @channel2 @channel3)
+2. Or, upload a file containing a list of channels
+
+-------------------------------------------
+
+
+Добро пожаловать в бот проверки комментариев канала!
+
+Этот бот может проверить, открыт ли раздел комментариев телеграм-канала. Вы можете отправить список каналов или файл, содержащий список каналов, и бот проверит, есть ли у них открытые разделы комментариев.
+
+Как пользоваться ботом:
+1. Отправьте сообщение со списком каналов (например, @channel1 @channel2 @channel3)
+2. Или загрузите файл, содержащий список каналов
 """
 
 api_id = os.environ.get("TELEGRAM_API_ID")
@@ -33,18 +39,6 @@ bot = Bot(token=bot_token)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
-def create_menu():
-    menu = InlineKeyboardMarkup()
-    menu.add(InlineKeyboardButton("Channels List", callback_data="list_channels"))
-    menu.add(InlineKeyboardButton("Upload File", callback_data="upload_file"))
-    return menu
-
-def create_reply_keyboard():
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(KeyboardButton("/list"))
-    keyboard.add(KeyboardButton("/file"))
-    return keyboard
-
 async def on_startup(dp):
     await telethon_client.start()
 
@@ -54,17 +48,7 @@ async def on_shutdown(dp):
 
 @dp.message_handler(commands=['start', 'help'])
 async def start_help(message: types.Message):
-    menu = create_menu()
-    await message.reply(BANNER, reply_markup=menu)
-
-@dp.callback_query_handler(lambda callback_query: callback_query.data in ["list_channels", "upload_file"])
-async def process_menu(callback_query: types.CallbackQuery):
-    if callback_query.data == "list_channels":
-        await bot.send_message(chat_id=callback_query.from_user.id, text="Please send me the list of channels (e.g. @channel1 @channel2 @channel3).")
-    elif callback_query.data == "upload_file":
-        await bot.send_message(chat_id=callback_query.from_user.id, text="Please upload a file containing the list of channels.")
-    await callback_query.answer()
-
+    await message.reply(BANNER)
 
 @dp.message_handler(lambda message: message.text and "@" in message.text)
 async def list_channels(message: types.Message):

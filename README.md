@@ -12,4 +12,8 @@ This Telegram bot checks if channels have open comments sections. Users can send
 1. Clone this repository
 2. Install the required Python packages by running `pip install -r requirements.txt`
 3. Create a `.env` file with your Telegram API ID, API Hash, and Bot Token
-4. Run the bot with `python bot.py`
+4. Run the bot with `python main.py`
+
+## License
+
+MIT

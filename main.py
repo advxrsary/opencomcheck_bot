@@ -1,12 +1,20 @@
 import os
 import asyncio
 import re
+import logging
+import tempfile
+from typing import List
+from aiogram.utils.exceptions import BadRequest
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ParseMode, InputFile
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.utils import executor
 from telethon import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.errors.rpcerrorlist import UsernameNotOccupiedError
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BANNER = """
 Welcome to the Channel Comment Checker Bot!
@@ -39,6 +47,9 @@ bot = Bot(token=bot_token)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 async def on_startup(dp):
     await telethon_client.start()
 
@@ -50,24 +61,47 @@ async def on_shutdown(dp):
 async def start_help(message: types.Message):
     await message.reply(BANNER)
 
+async def check_channels(channels: List[str]) -> List[str]:
+    open_comments = []
+    not_existing_channels = []
+
+    for channel_username in channels:
+        try:
+            channel = await telethon_client.get_entity(channel_username)
+            if not channel.admin_rights or channel.admin_rights.post_messages:
+                open_comments.append(channel_username)
+        except ValueError as e:
+            not_existing_channels.append(channel_username)
+            print(f"Error checking channel {channel_username}: {e}")
+
+    if not_existing_channels:
+        print(f"Non-existing channels: {', '.join(not_existing_channels)}")
+
+    return open_comments
+
+async def send_open_comments_channels(chat_id: int, open_comments: List[str]):
+    if not open_comments:
+        await bot.send_message(chat_id=chat_id, text="No channels with open comments found.")
+        return
+
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as f:
+        f.write("\n".join(open_comments))
+        f.flush()  
+    with open(f.name, "rb") as file_to_send:
+        await bot.send_document(chat_id=chat_id, document=InputFile(file_to_send), caption="Channels with open comments:")
+
+    os.remove(f.name)
+
+
 @dp.message_handler(lambda message: message.text and "@" in message.text)
 async def list_channels(message: types.Message):
     channels = re.findall(r"@[\w\d]+", message.text)
-    open_comments = []
-    
-    for channel_username in channels:
-        channel = await telethon_client.get_entity(channel_username)
-        full_channel = await telethon_client(GetFullChannelRequest(channel))
-        
-        if full_channel.full_chat.linked_chat_id:
-            open_comments.append(channel_username)
+    await message.reply(f"Checking {len(channels)} channels. Please wait...")
 
-    output_filename = "open_comments_channels.txt"
-    with open(output_filename, "w") as f:
-        f.write("\n".join(open_comments))
-    
-    with open(output_filename, "rb") as f:
-        await bot.send_document(chat_id=message.chat.id, document=InputFile(f), caption="Channels with open comments:")
+    open_comments = await check_channels(channels)
+
+    await send_open_comments_channels(message.chat.id, open_comments)
+
 
 @dp.message_handler(content_types=['document'])
 async def handle_file(message: types.Message):
@@ -76,21 +110,11 @@ async def handle_file(message: types.Message):
 
     channels = [line.strip() for line in file_bytes.getvalue().decode().split('\n')]
 
-    open_comments = []
+    await message.reply(f"Checking {len(channels)} channels. Please wait...")
 
-    for channel_username in channels:
-        channel = await telethon_client.get_entity(channel_username)
-        full_channel = await telethon_client(GetFullChannelRequest(channel))
+    open_comments = await check_channels(channels)
 
-        if full_channel.full_chat.linked_chat_id:
-            open_comments.append(channel_username)
-
-    output_filename = "open_comments_channels.txt"
-    with open(output_filename, "w") as f:
-        f.write("\n".join(open_comments))
-
-    with open(output_filename, "rb") as f:
-        await bot.send_document(chat_id=message.chat.id, document=InputFile(f), caption="Channels with open comments:")
+    await send_open_comments_channels(message.chat.id, open_comments)
 
 
 if __name__ == '__main__':

@@ -88,7 +88,7 @@ async def send_open_comments_channels(chat_id: int, open_comments: List[str]):
         f.write("\n".join(open_comments))
         f.flush()  
     with open(f.name, "rb") as file_to_send:
-        await bot.send_document(chat_id=chat_id, document=InputFile(file_to_send), caption="Channels with open comments:")
+        await bot.send_document(chat_id=chat_id, document=InputFile(file_to_send), caption="Channels with open comments section")
 
     os.remove(f.name)
 

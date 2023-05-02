@@ -4,6 +4,7 @@ import re
 import logging
 import tempfile
 from typing import List
+from contextlib import asynccontextmanager
 from aiogram.utils.exceptions import BadRequest
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ParseMode, InputFile
@@ -41,7 +42,15 @@ api_id = os.environ.get("TELEGRAM_API_ID")
 api_hash = os.environ.get("TELEGRAM_API_HASH")
 bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
 
-telethon_client = TelegramClient("anon", api_id, api_hash)
+@asynccontextmanager
+async def get_telethon_client():
+    telethon_client = TelegramClient("anon", api_id, api_hash)
+    await telethon_client.start(bot_token=bot_token)
+    try:
+        yield telethon_client
+    finally:
+        await telethon_client.disconnect()
+        await bot.close()
 
 bot = Bot(token=bot_token)
 dp = Dispatcher(bot)
@@ -51,11 +60,10 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 async def on_startup(dp):
-    await telethon_client.start()
+    pass
 
 async def on_shutdown(dp):
-    await telethon_client.disconnect()
-    await bot.close()
+    pass
 
 @dp.message_handler(commands=['start', 'help'])
 async def start_help(message: types.Message):

@@ -155,9 +155,11 @@ async def check_channels(telethon_client, channels: List[str]) -> List[str]:
             full_channel = await telethon_client(GetFullChannelRequest(channel))
             if full_channel.full_chat.linked_chat_id:
                 open_comments.append(channel_username)
-        except ValueError as e:
+        except UsernameNotOccupiedError:
             not_existing_channels.append(channel_username)
-            print(f"Error checking channel {channel_username}: {e}")
+            print(f"Username {channel_username} not occupied.")
+        except Exception as e:
+            print(f"Error while fetching channel {channel_username}: {e}")
 
     if not_existing_channels:
         print(f"Non-existing channels: {', '.join(not_existing_channels)}")

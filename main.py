@@ -333,15 +333,17 @@ async def list_users(message: types.Message):
     if str(message.from_user.id) == TELEGRAM_USER_ID:
         users_data = await get_users()
         response = "Users:\n\n"
-        for user in users_data:
-            response += f"ID: {user['id']}\n"
-            response += f"Username: @{user['username']}\n"
-            response += f"First Name: {user['first_name']}\n"
-            response += f"Last Name: {user['last_name']}\n"
+        for idx, user in enumerate(users_data, start=1):
+            response += f"**User {idx}**\n"
+            response += f"- ID: `{user['id']}`\n"
+            response += f"- Username: `@{user['username']}`\n"
+            response += f"- First Name: `{user['first_name']}`\n"
+            response += f"- Last Name: `{user['last_name'] or 'None'}`\n"
             response += "\n"
-        await message.reply(response)
+        await message.reply(response, parse_mode='Markdown')
     else:
         await message.reply("You are not authorized to use this command.")
+
 
 
 

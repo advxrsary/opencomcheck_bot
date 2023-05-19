@@ -5,6 +5,7 @@ import logging
 import aiosqlite
 import tempfile
 import asyncio
+import uuid
 from datetime import datetime
 from dotenv import load_dotenv
 from typing import List
@@ -72,7 +73,8 @@ if not TELEGRAM_USER_ID:
 @asynccontextmanager
 async def get_telethon_client():
     logging.info("Getting Telethon client...")
-    telethon_client = TelegramClient("anon", api_id, api_hash)
+    session_name = str(uuid.uuid4())  # Generate a unique session name
+    telethon_client = TelegramClient(session_name, api_id, api_hash)
     await telethon_client.start(bot_token=bot_token)
     try:
         yield telethon_client
@@ -105,13 +107,17 @@ async def create_db():
         ''')
         await db.commit()
 
+db_lock = asyncio.Lock()
+
 @asynccontextmanager
 async def get_db():
-    db = await aiosqlite.connect(db_name)
-    try:
-        yield db
-    finally:
-        await db.close()
+    async with db_lock:
+        db = await aiosqlite.connect(db_name)
+        try:
+            yield db
+        finally:
+            await db.close()
+
 
 async def add_user(user: types.User):
     async with get_db() as db:

@@ -43,16 +43,12 @@ def get_timestamp() -> str:
 def get_sleep_time(num_channels: int) -> int:
     logging.info("Getting sleep time...")
     if num_channels <= 50:
-        logging.warning("Fast queue.")
         return 10
     elif num_channels <= 90:
-        logging.warning("Medium queue.")
         return 60
     elif num_channels <= 150:
-        logging.warning("Slow queue.")
         return 120
     else:
-        logging.warning("The slowest queue.")
         return 200
 
 async def update_progress_message(i: int, total: int, start_time: float, progress_message):
@@ -68,13 +64,6 @@ async def update_progress_message(i: int, total: int, start_time: float, progres
         f"Estimated time remaining: {int(estimated_minutes)} minutes {int(estimated_seconds)} seconds",
         reply_markup=keyboard  # Add the keyboard to the message
     )
-
-async def print_remaining_channels(i: int, channels: List[str], sleep_time: int):
-    if (i + 1) % 30 == 0:
-        print(
-            f"\r{len(channels) - (i + 1)} channels remaining.\nAnti-flood sleep for {sleep_time} seconds.", end='', flush=True)
-        await asyncio.sleep(sleep_time)
-
 
 async def add_user(user: types.User):
     async with get_db() as db:

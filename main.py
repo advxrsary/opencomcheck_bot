@@ -11,13 +11,15 @@ from typing import List
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.types import InputFile
+from aiogram.types import InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.exceptions import NetworkError
 from aiogram.utils import executor
 from contextlib import asynccontextmanager
 from telethon import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.errors.rpcerrorlist import UsernameNotOccupiedError, FloodWaitError
+from telethon.tl.types import InputPeerChannel
+
 
 load_dotenv()
 
@@ -42,14 +44,14 @@ To use the bot:
 2. Или загрузите файл, содержащий список каналов
 """
 
-api_id = os.environ.get("TELEGRAM_API_ID")
-api_hash = os.environ.get("TELEGRAM_API_HASH")
-bot_tokens = [os.getenv(f"TELEGRAM_BOT_TOKEN_{i+1}") for i in range(3)]
+api_id = os.getenv("TELEGRAM_API_ID")
+api_hash = os.getenv("TELEGRAM_API_HASH")
+bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_USER_ID = os.environ.get("TELEGRAM_USER_ID")
 db_name = os.environ.get("DB_NAME")
 semaphore = asyncio.Semaphore(10)
-clients = [TelegramClient(f"client_{i+1}", api_id, api_hash) for i in range(len(bot_tokens))]
-bot = Bot(token=bot_tokens[0])
+clients = TelegramClient("anon", api_id, api_hash)
+bot = Bot(token=bot_token)
 dp = Dispatcher(bot)
 class UserTrackingMiddleware(BaseMiddleware):
     async def on_pre_process_message(self, message: types.Message, data: dict):
@@ -62,32 +64,24 @@ dp.middleware.setup(UserTrackingMiddleware())
 dp.middleware.setup(LoggingMiddleware())
 
 
-
 if not TELEGRAM_USER_ID:
     TELEGRAM_USER_ID = input(
         "TELEGRAM_USER_ID is unset in '.env'. Please enter TELEGRAM_USER_ID: ")
 
-class AllBotsFloodWaitError(Exception):
-    def __init__(self):
-        super().__init__("All bots are in flood wait. Please wait for the flood wait to end.")
 
 @asynccontextmanager
 async def get_telethon_client():
     logging.info("Getting Telethon client...")
-    for _ in range(len(clients)):
-        client = clients.pop(0)
-        clients.append(client)
-        try:
-            await client.start(bot_token=bot_tokens[clients.index(client)])
-            yield client
-            break
-        except FloodWaitError as e:
-            logging.info(f"FloodWaitError: {e.seconds} seconds. Switching to the next bot...")
-            if not clients:
-                logging.error("No more bots left. Please wait for the flood wait to end.")
-                raise AllBotsFloodWaitError from e
-        finally:
-            await client.disconnect()
+    telethon_client = TelegramClient("anon", api_id, api_hash)
+    await telethon_client.start(bot_token=bot_token)
+    try:
+        yield telethon_client
+    except FloodWaitError as e:
+        logging.info(f"FloodWaitError: {e.seconds} seconds.")
+        await message.reply("The request limit was hit. Please try again after some time.")
+        raise e
+    finally:
+        await telethon_client.disconnect()
     logging.info("Finished getting Telethon client.")
 
 
@@ -151,20 +145,17 @@ def get_timestamp() -> str:
 def get_sleep_time(num_channels: int) -> int:
     logging.info("Getting sleep time...")
     if num_channels <= 50:
-        logging.info("Finished getting sleep time.")
-        return 0
-    elif num_channels <= 90:
-        logging.info("Finished getting sleep time.")
+        logging.info("Fast queue.")
         return 1
-    elif num_channels <= 196:
-        logging.info("Finished getting sleep time.")
-        return 2
-    elif num_channels <= 392:
-        logging.info("Finished getting sleep time.")
+    elif num_channels <= 90:
+        logging.info("Medium queue.")
         return 3
+    elif num_channels <= 150:
+        logging.info("Slow queue.")
+        return 5
     else:
-        logging.info("Finished getting sleep time.")
-        return 4
+        logging.info("The slowest queue.")
+        return 6
 
 
 async def check_channels(telethon_client, channels: List[str], message: types.Message):
@@ -180,13 +171,12 @@ async def check_channels(telethon_client, channels: List[str], message: types.Me
         logging.info(f"Checking channel {channel_username}...")
         if re.match(r"@[\w\d]+", channel_username):  # Check if the username is valid
             try:
-                async with semaphore:
-                    channel = await telethon_client.get_entity(channel_username)
-                    full_channel = await telethon_client(GetFullChannelRequest(channel))
-                    if full_channel.full_chat.linked_chat_id:
-                        open_comments[channel_username] = channel
-                    else:
-                        closed_comments[channel_username] = channel
+                channel = await telethon_client.get_entity(channel_username)
+                full_channel = await telethon_client(GetFullChannelRequest(channel))
+                if full_channel.full_chat.linked_chat_id:
+                    open_comments[channel_username] = channel
+                else:
+                    closed_comments[channel_username] = channel
             except UsernameNotOccupiedError:
                 logging.warning(f"Username {channel_username} not occupied")
                 errors[channel_username] = "Username not occupied"

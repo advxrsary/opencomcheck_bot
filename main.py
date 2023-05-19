@@ -1,3 +1,8 @@
+# Local import
+from telethon.errors import FloodWaitError
+from utilities import *
+
+# Standard library imports
 import asyncio
 import logging
 import os
@@ -10,11 +15,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List
 
+# Third party imports
 import aiosqlite
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.types import InputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 from aiogram.utils.exceptions import NetworkError
 from dotenv import load_dotenv
@@ -22,37 +28,16 @@ from telethon import TelegramClient
 from telethon.errors.rpcerrorlist import FloodWaitError, UsernameNotOccupiedError
 from telethon.tl.functions.channels import GetFullChannelRequest
 
-
-
 load_dotenv()
-
-BANNER = """
-Welcome to the Channel Comment Checker Bot!
-
-This bot can check if a Telegram channel has an open comments section. You can either send a list of channels or a file containing a list of channels, and the bot will check if they have open comments sections.
-
-To use the bot:
-1. Send a message with a list of channels (e.g. @channel1 @channel2 @channel3)
-2. Or, upload a file containing a list of channels
-
--------------------------------------------
-
-
-Добро пожаловать в бот проверки комментариев канала!
-
-Этот бот может проверить, открыт ли раздел комментариев телеграм-канала. Вы можете отправить список каналов или файл, содержащий список каналов, и бот проверит, есть ли у них открытые разделы комментариев.
-
-Как пользоваться ботом:
-1. Отправьте сообщение со списком каналов (например, @channel1 @channel2 @channel3)
-2. Или загрузите файл, содержащий список каналов
-"""
 
 api_id = os.getenv("TELEGRAM_API_ID")
 api_hash = os.getenv("TELEGRAM_API_HASH")
 bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_USER_ID = os.environ.get("TELEGRAM_USER_ID")
+user_id = os.environ.get("TELEGRAM_USER_ID")
 db_name = os.environ.get("DB_NAME")
-bot = Bot(token=bot_token)
+bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+
+bot = Bot(bot_token)
 dp = Dispatcher(bot)
 session_name = "anon"
 
@@ -66,8 +51,8 @@ dp.middleware.setup(UserTrackingMiddleware())
 dp.middleware.setup(LoggingMiddleware())
 
 
-if not TELEGRAM_USER_ID:
-    TELEGRAM_USER_ID = input(
+if not user_id:
+    user_id = input(
         "TELEGRAM_USER_ID is unset in '.env'. Please enter TELEGRAM_USER_ID: ")
 
 
@@ -95,7 +80,7 @@ async def get_telethon_client():
     finally:
         await telethon_client.disconnect()
         if os.path.exists(session_file_path):
-            os.remove(session_file_path) 
+            os.remove(session_file_path)
         logging.info("Finished getting Telethon client.")
 
 
@@ -110,114 +95,13 @@ async def get_db():
 db_lock = asyncio.Lock()
 
 
-@asynccontextmanager
-async def get_db():
-    async with db_lock:
-        db = await aiosqlite.connect(db_name)
-        try:
-            yield db
-        finally:
-            await db.close()
-
-
-async def add_user(user: types.User):
-    async with get_db() as db:
-        await db.execute('''
-            INSERT OR IGNORE INTO users(id, username, first_name, last_name)
-            VALUES(?, ?, ?, ?)
-        ''', (user.id, user.username, user.first_name, user.last_name))
-        await db.commit()
-
-
-async def get_users() -> List[dict]:
-    logging.info("Getting users from the database...")
-    users = []
-    async with get_db() as db:
-        cursor = await db.cursor()
-        await cursor.execute("SELECT * FROM users")
-        rows = await cursor.fetchall()
-
-    for row in rows:
-        users.append(
-            {"id": row[0], "username": row[1],
-                "first_name": row[2], "last_name": row[3]}
-        )
-    logging.info("Finished getting users from the database.")
-    return users
-
-
-def get_timestamp() -> str:
-    logging.info("Getting timestamp...")
-    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-async def update_progress_message(i: int, total: int, start_time: float, progress_message):
-    elapsed_time = time.time() - start_time 
-    channels_remaining = total - (i + 1)
-    estimated_time_remaining = (elapsed_time / (i + 1)) * channels_remaining
-    estimated_minutes, estimated_seconds = divmod(estimated_time_remaining, 60)
-    await progress_message.edit_text(
-        f"Checked {i + 1} out of {total} channels...\n"
-        f"Estimated time remaining: {int(estimated_minutes)} minutes {int(estimated_seconds)} seconds"
-    )
-
-
-def get_sleep_time(num_channels: int) -> int:
-    logging.info("Getting sleep time...")
-    if num_channels <= 50:
-        logging.warning("Fast queue.")
-        return 10
-    elif num_channels <= 90:
-        logging.warning("Medium queue.")
-        return 60
-    elif num_channels <= 150:
-        logging.warning("Slow queue.")
-        return 120
-    else:
-        logging.warning("The slowest queue.")
-        return 200
-
-
-from telethon.errors import FloodWaitError
-
-async def check_channels(telethon_client, channels: List[str], message: types.Message):
-    open_comments, closed_comments, errors = {}, {}, {}
-    progress_message = await message.reply("Starting to check channels...")
-    sleep_time = get_sleep_time(len(channels))
-    start_time = time.time()
-    logging.info(f"Checking {len(channels)} channels...")
-    for i, channel_username in enumerate(channels):
-        if re.match(r"@[\w\d]+", channel_username):  # Check if the username is valid
-            try:
-                channel = await telethon_client.get_entity(channel_username)
-                full_channel = await telethon_client(GetFullChannelRequest(channel))
-                if full_channel.full_chat.linked_chat_id:
-                    open_comments[channel_username] = channel
-                else:
-                    closed_comments[channel_username] = channel
-            except UsernameNotOccupiedError:
-                logging.warning(f"Username {channel_username} not occupied")
-                errors[channel_username] = "Username not occupied"
-            except ValueError as e:
-                logging.warning(f"ValueError while processing {channel_username}: {e}")
-                errors[channel_username] = f"Error while processing {channel_username}: {e}"
-                logger.warning(f"Error while processing {channel_username}: {e}")
-            except FloodWaitError as e:
-                logging.error(f"FloodWaitError: {e.seconds} seconds. Sleeping now.")
-                await asyncio.sleep(e.seconds)
-            except Exception as e:
-                logging.warning(f"Error while processing {channel_username}: {e}")
-                errors[channel_username] = f"Error while processing {channel_username}: {e}"
-        else:
-            logging.warning(f"Invalid username: {channel_username}")
-            errors[channel_username] = "Invalid username"
-
-        await update_progress_message(i, len(channels), start_time, progress_message)
-        if (i + 1) % 30 == 0:
-            print(f"\r{len(channels) - (i + 1)} channels remaining.\nAnti-flood sleep for {sleep_time} seconds.", end='', flush=True)
-            await asyncio.sleep(sleep_time)
-    logging.info("Finished checking channels.")
-    return open_comments, closed_comments, errors
-
+def generate_keyboard():
+    # Create the keyboard
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton(
+        "View checked", callback_data="view_checked"))
+    keyboard.add(InlineKeyboardButton("Cancel", callback_data="cancel"))
+    return keyboard
 
 
 async def send_summary(chat_id: int, open_comments: List[str], closed_comments: List[str], errors: List[str]):
@@ -239,13 +123,46 @@ async def send_channels_file(message: types.Message, filename: str, channels: Li
     logging.info("Finished sending channels file.")
 
 
-async def show_results(message: types.Message, latest_data, description: str):
-    logging.info("Showing results...")
-    text = f"{description}:\n\n"
-    for channel in latest_data:
-        text += f"{channel['title']} ({channel['username']}): {channel['link']}\n"
-    await message.reply(text)
-    logging.info("Finished showing results.")
+async def handle_channel_processing(channel_username: str, telethon_client, open_comments: dict, closed_comments: dict, errors: dict):
+    try:
+        channel = await telethon_client.get_entity(channel_username)
+        full_channel = await telethon_client(GetFullChannelRequest(channel))
+        if full_channel.full_chat.linked_chat_id:
+            open_comments[channel_username] = channel
+        else:
+            closed_comments[channel_username] = channel
+    except UsernameNotOccupiedError:
+        logging.warning(f"Username {channel_username} not occupied")
+        errors[channel_username] = "Username not occupied"
+    except ValueError as e:
+        logging.warning(f"ValueError while processing {channel_username}: {e}")
+        errors[channel_username] = f"Error while processing {channel_username}: {e}"
+        logger.warning(f"Error while processing {channel_username}: {e}")
+    except FloodWaitError as e:
+        logging.error(f"FloodWaitError: {e.seconds} seconds. Sleeping now.")
+        await asyncio.sleep(e.seconds)
+    except Exception as e:
+        logging.warning(f"Error while processing {channel_username}: {e}")
+        errors[channel_username] = f"Error while processing {channel_username}: {e}"
+
+
+async def check_channels(telethon_client, channels: List[str], message: types.Message):
+    open_comments, closed_comments, errors = {}, {}, {}
+    progress_message = await message.reply("Starting to check channels...")
+    sleep_time = get_sleep_time(len(channels))
+    start_time = time.time()
+    logging.info(f"Checking {len(channels)} channels...")
+    for i, channel_username in enumerate(channels):
+        if re.match(r"@[\w\d]+", channel_username):  # Check if the username is valid
+            await handle_channel_processing(channel_username, telethon_client, open_comments, closed_comments, errors)
+        else:
+            logging.warning(f"Invalid username: {channel_username}")
+            errors[channel_username] = "Invalid username"
+
+        await update_progress_message(i, len(channels), start_time, progress_message)
+        await print_remaining_channels(i, len(channels), start_time)
+    logging.info("Finished checking channels.")
+    return open_comments, closed_comments, errors
 
 
 class ChannelNotFoundError(Exception):
@@ -262,7 +179,6 @@ async def track_user_middleware(event: types.Update, next_call):
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
 
 latest_opened = {}
 latest_closed = {}
@@ -338,7 +254,7 @@ async def show_errors(message: types.Message):
 
 @dp.message_handler(commands=['list_users'])
 async def list_users(message: types.Message):
-    if str(message.from_user.id) == TELEGRAM_USER_ID:
+    if str(message.from_user.id) == user_id:
         users_data = await get_users()
         response = "Users:\n\n"
         for idx, user in enumerate(users_data, start=1):
@@ -415,11 +331,15 @@ async def on_startup(dp):
 async def on_shutdown(dp):
     pass
 
+
+def main():
+    executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
+
+
 if __name__ == '__main__':
     while True:
         try:
-            executor.start_polling(
-                dp, on_startup=on_startup, on_shutdown=on_shutdown)
+            main()
         except (NetworkError, FloodWaitError) as e:
             logging.error(f"Error occurred: {e}. Retrying in 5 seconds...")
             time.sleep(5)

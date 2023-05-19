@@ -12,14 +12,13 @@ from typing import List
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.types import InputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InputFile
 from aiogram.utils.exceptions import NetworkError
 from aiogram.utils import executor
 from contextlib import asynccontextmanager
 from telethon import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.errors.rpcerrorlist import UsernameNotOccupiedError, FloodWaitError
-from telethon.tl.types import InputPeerChannel
 
 
 load_dotenv()
@@ -50,13 +49,10 @@ api_hash = os.getenv("TELEGRAM_API_HASH")
 bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_USER_ID = os.environ.get("TELEGRAM_USER_ID")
 db_name = os.environ.get("DB_NAME")
-semaphore = asyncio.Semaphore(10)
-clients = TelegramClient("anon", api_id, api_hash)
 bot = Bot(token=bot_token)
 dp = Dispatcher(bot)
 class UserTrackingMiddleware(BaseMiddleware):
     async def on_pre_process_message(self, message: types.Message, data: dict):
-        print("on_pre_process_message called!")  # Debug print statement
         await add_user(message.from_user)
 
 
@@ -74,17 +70,20 @@ if not TELEGRAM_USER_ID:
 async def get_telethon_client():
     logging.info("Getting Telethon client...")
     session_name = str(uuid.uuid4())  # Generate a unique session name
+    session_file_path = f"{session_name}.session"  # Full path of the session file
     telethon_client = TelegramClient(session_name, api_id, api_hash)
     await telethon_client.start(bot_token=bot_token)
     try:
         yield telethon_client
     except FloodWaitError as e:
         logging.info(f"FloodWaitError: {e.seconds} seconds.")
-        await message.reply("The request limit was hit. Please try again after some time.")
         raise e
     finally:
         await telethon_client.disconnect()
-    logging.info("Finished getting Telethon client.")
+        if os.path.exists(session_file_path):  # Check if the session file exists
+            os.remove(session_file_path)  # Remove the session file
+        logging.info("Finished getting Telethon client.")
+
 
 
 @asynccontextmanager
@@ -94,18 +93,6 @@ async def get_db():
         yield db
     finally:
         await db.close()
-
-async def create_db():
-    async with get_db() as db:
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS users(
-                id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT
-            )
-        ''')
-        await db.commit()
 
 db_lock = asyncio.Lock()
 
@@ -152,16 +139,16 @@ def get_sleep_time(num_channels: int) -> int:
     logging.info("Getting sleep time...")
     if num_channels <= 50:
         logging.info("Fast queue.")
-        return 1
+        return 10
     elif num_channels <= 90:
         logging.info("Medium queue.")
-        return 3
+        return 180
     elif num_channels <= 150:
         logging.info("Slow queue.")
-        return 5
+        return 240
     else:
         logging.info("The slowest queue.")
-        return 6
+        return 200
 
 
 async def check_channels(telethon_client, channels: List[str], message: types.Message):
@@ -195,7 +182,9 @@ async def check_channels(telethon_client, channels: List[str], message: types.Me
             logging.warning(f"Invalid username: {channel_username}")
             errors[channel_username] = "Invalid username"
 
-        if (i + 1) % 1 == 0:
+        if (i + 1) % 30 == 0:
+            await asyncio.sleep(sleep_time)
+        elif (i + 1) % 2 == 0:
             elapsed_time = time.time() - start_time  # Calculate the elapsed time
             channels_remaining = len(channels) - (i + 1)
             estimated_time_remaining = (elapsed_time / (i + 1)) * channels_remaining  # Estimate the remaining time
@@ -207,8 +196,6 @@ async def check_channels(telethon_client, channels: List[str], message: types.Me
                 f"Checked {i + 1} out of {len(channels)} channels...\n"
                 f"Estimated time remaining: {int(estimated_minutes)} minutes {int(estimated_seconds)} seconds"
             )
-        
-        await asyncio.sleep(sleep_time)
         
     logging.info("Finished checking channels.")
     return open_comments, closed_comments, errors
@@ -341,11 +328,10 @@ async def list_users(message: types.Message):
         await message.reply("You are not authorized to use this command.")
 
 
-
-
 @dp.message_handler(lambda message: message.text and "@" in message.text)
-async def list_channels(message: types.Message):
-    channels = set(re.findall(r"@[\w\d]+", message.text))
+async def handle_text(message: types.Message):
+    pattern = r"(?:https?://tgstat\.ru/channel/)?@([\w\d]+)(?:/stat)?"
+    channels = set("@" + match.group(1) if not match.group(1).startswith("@") else match.group(1) for match in re.finditer(pattern,message.text))
 
     async with get_telethon_client() as telethon_client:
         try:
@@ -358,7 +344,7 @@ async def list_channels(message: types.Message):
     latest_closed[message.chat.id] = closed_comments
     
     await send_summary(message.chat.id, open_comments, closed_comments, errors)
-    if len(open_comments) > 50 or message.text.startswith("/opened_file"):
+    if len(open_comments) > 50 or (message.text and message.text.startswith("/opened_file")):
         await send_channels_file(message.chat.id, open_comments, "opened")
 
 
@@ -367,7 +353,9 @@ async def handle_file(message: types.Message):
     document = message.document
     file_bytes = await bot.download_file_by_id(document.file_id)
 
-    channels = set(line.strip() for line in file_bytes.getvalue().decode().split('\n'))
+    pattern = r"(?:https?://tgstat\.ru/channel/)?@([\w\d]+)(?:/stat)?"
+    channels = set("@" + match.group(1) if not match.group(1).startswith("@") else match.group(1) for match in re.finditer(pattern, file_bytes.getvalue().decode()))
+
 
     async with get_telethon_client() as telethon_client:
         try:
@@ -380,7 +368,7 @@ async def handle_file(message: types.Message):
     latest_closed[message.chat.id] = closed_comments
 
     await send_summary(message.chat.id, open_comments, closed_comments, errors)
-    if len(open_comments) > 50 or message.text.startswith("/opened_file"):
+    if len(open_comments) > 50 or (message.text and message.text.startswith("/opened_file")):
         await send_channels_file(message.chat.id, open_comments, "opened")
 
 async def on_startup(dp):

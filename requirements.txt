@@ -1,4 +1,0 @@
-aiogram==2.25.1
-aiohttp==3.8.4
-Telethon==1.28.5
-python-dotenv==0.21.0

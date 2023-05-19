@@ -51,10 +51,12 @@ def get_sleep_time(num_channels: int) -> int:
     else:
         return 200
 
-async def update_progress_message(i: int, total: int, start_time: float, progress_message):
+async def update_progress_message(i: int, total: int, start_time: float, progress_message, sleep_time: int):
     elapsed_time = time.time() - start_time 
+    total_sleep_time = sleep_time * ((i + 1) // 30)  # Total sleep time is sleep_time for each group of 30 channels
+    total_time = elapsed_time + total_sleep_time
     channels_remaining = total - (i + 1)
-    estimated_time_remaining = (elapsed_time / (i + 1)) * channels_remaining
+    estimated_time_remaining = (total_time / (i + 1)) * channels_remaining
     estimated_minutes, estimated_seconds = divmod(estimated_time_remaining, 60)
     
     keyboard = generate_keyboard()
@@ -64,6 +66,7 @@ async def update_progress_message(i: int, total: int, start_time: float, progres
         f"Estimated time remaining: {int(estimated_minutes)} minutes {int(estimated_seconds)} seconds",
         reply_markup=keyboard  # Add the keyboard to the message
     )
+
 
 async def add_user(user: types.User):
     async with get_db() as db:

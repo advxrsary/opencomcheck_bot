@@ -4,14 +4,12 @@ from main import get_db, generate_keyboard
 # Standart libraries
 import logging
 import time
-import asyncio
 
 # Third-party libraries
 from datetime import datetime
 from typing import List
-from dotenv import load_dotenv
 from aiogram import types
-from aiogram.types import InputFile
+
 
 
 BANNER = """

@@ -20,7 +20,7 @@ import aiosqlite
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram.utils import executor
 from aiogram.utils.exceptions import NetworkError
 from dotenv import load_dotenv
@@ -33,7 +33,7 @@ load_dotenv()
 
 API_ID = os.getenv("TELEGRAM_API_ID")
 API_HASH = os.getenv("TELEGRAM_API_HASH")
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN3")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 USER_ID = os.environ.get("TELEGRAM_USER_ID")
 DB_NAME = os.environ.get("DB_NAME")
 

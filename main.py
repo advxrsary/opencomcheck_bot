@@ -26,14 +26,14 @@ from aiogram.utils.exceptions import NetworkError
 from dotenv import load_dotenv
 from telethon import TelegramClient
 from telethon.errors.rpcerrorlist import FloodWaitError, UsernameNotOccupiedError, UsernameInvalidError
-from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.functions.channels import GetFullChannelRequest, GetMessagesRequest
 
 load_dotenv()
 
 
 API_ID = os.getenv("TELEGRAM_API_ID")
 API_HASH = os.getenv("TELEGRAM_API_HASH")
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN9")
 USER_ID = os.environ.get("TELEGRAM_USER_ID")
 DB_NAME = os.environ.get("DB_NAME")
 
@@ -41,10 +41,15 @@ BOT = Bot(BOT_TOKEN)
 DP = Dispatcher(BOT)
 SESSION_NAME = "anon"
 CHECKED_CHANNELS, CANCELATION_FLAG = {}, {}
+REQUEST_COUNT = 0
 
 class UserTrackingMiddleware(BaseMiddleware):
     async def on_pre_process_message(self, message: types.Message, data: dict):
         await add_user(message.from_user)
+
+# if the REQUEST_COUNT is 199 or more:
+class RequestLimitError(Exception):
+    pass
 
 
 DP.middleware.setup(UserTrackingMiddleware())
@@ -75,6 +80,7 @@ async def get_telethon_client():
         yield telethon_client
     except FloodWaitError as e:
         logging.error(f"FloodWaitError: {e.seconds} seconds.")
+        await asyncio.sleep(e.seconds)
         raise e
     finally:
         await telethon_client.disconnect()
@@ -124,31 +130,49 @@ async def send_channels_file(message: types.Message, filename: str, channels: Li
     os.unlink(f.name)
     logging.info("Finished sending channels file.")
 
-
 async def handle_channel_processing(channel_username: str, telethon_client, opened_comments: dict, closed_comments: dict, errors: dict):
+    global REQUEST_COUNT
+    sleep_time = None
     try:
         channel = await telethon_client.get_entity(channel_username)
+        REQUEST_COUNT += 1
+        if REQUEST_COUNT % 1 == 0:
+            sleep_time = 3
+            time.sleep(sleep_time)
+        elif REQUEST_COUNT % 31 == 0:
+            sleep_time = 60
+            date = "[{}]".format(datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
+            logging.info("%s. Sleeping for %s seconds to prevent flood wait...", date, sleep_time)
+            time.sleep(sleep_time)
+        elif REQUEST_COUNT % 199 == 0:
+            date = "[{}]".format(datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
+            logging.info("%s. Breaking the loop to prevent flood wait...", date)
+            raise RequestLimitError
+
         full_channel = await telethon_client(GetFullChannelRequest(channel))
         if full_channel.full_chat.linked_chat_id:
             opened_comments[channel_username] = channel
         else:
             closed_comments[channel_username] = channel
+
     except UsernameNotOccupiedError:
-        logging.warning(f"Username {channel_username} not occupied")
+        logging.warning("Username %s not occupied", channel_username)
         errors[channel_username] = "Username not occupied"
     except UsernameInvalidError:
-            logging.warning(f"Invalid username: {channel_username}")
-            errors[channel_username] = "Invalid username"
-    except ValueError as e:
-        logging.warning(f"ValueError while processing {channel_username}: {e}")
-        errors[channel_username] = f"Error while processing {channel_username}: {e}"
-        logger.warning(f"Error while processing {channel_username}: {e}")
-    except FloodWaitError as e:
-        logging.error(f"FloodWaitError: {e.seconds} seconds. Sleeping now.")
-        await asyncio.sleep(e.seconds)
-    except Exception as e:
-        logging.warning(f"Error while processing {channel_username}: {e}")
-        errors[channel_username] = f"Error while processing {channel_username}: {e}"
+        logging.warning("Invalid username: %s", channel_username)
+        errors[channel_username] = "Invalid username"
+    except ValueError as error:
+        logging.warning("ValueError while processing %s: %s", channel_username, error)
+        errors[channel_username] = f"Error while processing {channel_username}: {error}"
+        logger.warning("Error while processing %s: %s", channel_username, error)
+    except FloodWaitError as error:
+        logging.error("FloodWaitError: %s seconds.", error.seconds)
+        await asyncio.sleep(error.seconds)
+        raise error
+    except Exception as error:
+        logging.error("Error while processing %s: %s", channel_username, error)
+        errors[channel_username] = f"Error while processing {channel_username}: {error}"
+
 
 async def update_checked_channels(chat_id, channel_username, opened_comments, closed_comments, errors):
     if channel_username in opened_comments:
@@ -176,16 +200,15 @@ async def check_channels(telethon_client, channels: List[str], message: types.Me
             CANCELATION_FLAG[message.chat.id] = False
             return opened_comments, closed_comments, errors
         if re.match(r"@[\w\d]+", channel_username):
+            print(f"\rChecked {i+1}/{len(channels)} channels", end="")
             await handle_channel_processing(channel_username, telethon_client, opened_comments, closed_comments, errors)
         else:
             logging.warning(f"Invalid username: {channel_username}")
             errors[channel_username] = "Invalid username"
 
-        await update_progress_message(i, len(channels), start_time, progress_message, sleep_time)
+        await update_progress_message(i, len(channels), start_time, progress_message)
         await update_checked_channels(message.chat.id, channel_username, opened_comments, closed_comments, errors)
-        if (i + 1) % 30 == 0:
-            print(f"Anti-flood sleep for {sleep_time} seconds")
-            await asyncio.sleep(sleep_time)
+            
             
     
 
@@ -387,7 +410,12 @@ async def on_startup(dp):
 
 
 async def on_shutdown(dp):
-    pass
+    try:
+        await BOT.close()
+    except Exception as e:
+        logging.error(f"Error while closing bot: {e}")
+    finally:
+        logging.info("Bot closed.")
 
 
 def main():
@@ -398,8 +426,14 @@ if __name__ == '__main__':
     while True:
         try:
             main()
-        except (NetworkError, FloodWaitError) as e:
-            logging.error(f"Error occurred: {e}. Retrying in 5 seconds...")
+        except (NetworkError) as e:
+            logging.error(f"Network error: {e}, retrying in 5 seconds.")
             time.sleep(5)
+        except (FloodWaitError) as e:
+            logging.error(f"Flood wait error: {e}, sleeping for {e.seconds} seconds.")
+            time.sleep(e.seconds)
+        except (KeyboardInterrupt, SystemExit):
+            logging.info("Bot stopped.")
+            break
         else:
             break

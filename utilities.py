@@ -45,23 +45,29 @@ def get_sleep_time(num_channels: int) -> int:
     elif num_channels < 90:
         return 600
 
-def generate_progress_bar(current: int, total: int, length: int = 10) -> str:
-    progress = int(current / total * length)
+def generate_progress_bar(current: int, total: int, length: int = 12) -> str:
+    """Generates a progress bar as a string of blocks."""
+
+    proportion = current / total
+    progress = int(proportion * length)
+
     return '▓' * progress + '░' * (length - progress)
 
-async def update_progress_message(i: int, total: int, start_time: float, progress_message):
-    elapsed_time = time.time() - start_time 
-    channels_remaining = total - (i + 1)
-    estimated_time_remaining = (elapsed_time / (i + 1)) * channels_remaining
+def generate_progress_message(current: int, total: int, elapsed_time: float):
+    """Generates a progress message with the current progress and estimated time remaining."""
+
+    estimated_time_remaining = (elapsed_time / current) * (total - current) if current > 0 else 0
     estimated_minutes, estimated_seconds = divmod(estimated_time_remaining, 60)
-    
-    keyboard = generate_keyboard()
-    await progress_message.edit_text(
-        f"Checked {i + 1} out of {total} channels...\n"
-        f"{generate_progress_bar(i + 1, total)}\n"
-        f"Estimated time remaining: {int(estimated_minutes)} minutes {int(estimated_seconds)} seconds",
-        reply_markup=keyboard  # Add the keyboard to the message
-    )
+
+    percentage = int((current / total) * 100)
+
+    progress_bar = generate_progress_bar(current, total)
+
+    progress_message = f"{percentage}% {progress_bar} {current}/{total}\n"
+    progress_message += f"ETA: {int(estimated_minutes)} min. {int(estimated_seconds)} s."
+
+    return progress_message
+
 
 async def add_user(user: types.User):
     async with get_db() as db:

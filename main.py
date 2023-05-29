@@ -48,7 +48,6 @@ class UserTrackingMiddleware(BaseMiddleware):
     async def on_pre_process_message(self, message: types.Message, data: dict):
         await add_user(message.from_user)
 
-# if the REQUEST_COUNT is 199 or more:@feedb4ck_test_bot
 class RequestLimitError(Exception):
     pass
 
@@ -222,7 +221,7 @@ async def check_channels(telethon_client, channels: List[str], message: types.Me
         await update_progress_message(i, len(channels_to_check), start_time, progress_message)
         await update_checked_channels(message.chat.id, channel_username, opened_comments, closed_comments, errors)
 
-        # Remove checked channel from the original set
+
         channels.remove(channel_username)
 
     save_unchecked_channels(channels)
@@ -265,7 +264,6 @@ async def start_help(message: types.Message):
 async def view_checked(callback_query: types.CallbackQuery):
     global FILENAME
     chat_id = callback_query.message.chat.id
-    # FILENAME - .txt = filename
     if FILENAME:
         filename = FILENAME[:-4]
     else:
@@ -436,7 +434,6 @@ async def on_startup(dp):
 async def on_shutdown(dp):
     try:
         await BOT.close()
-        # delete FILENAME if exists
         if FILENAME:
             os.remove(FILENAME)
     except Exception as e:

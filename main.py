@@ -1,5 +1,4 @@
 # Local import
-from telethon.errors import FloodWaitError
 from utilities import *
 
 # Standard library imports
@@ -24,6 +23,7 @@ from aiogram.utils import executor
 from aiogram.utils.exceptions import NetworkError
 from dotenv import load_dotenv
 from telethon import TelegramClient
+from telethon.errors import FloodWaitError
 from telethon.errors.rpcerrorlist import FloodWaitError, UsernameNotOccupiedError, UsernameInvalidError
 from telethon.tl.functions.channels import GetFullChannelRequest
 from tqdm import tqdm

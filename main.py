@@ -26,7 +26,8 @@ from aiogram.utils.exceptions import NetworkError
 from dotenv import load_dotenv
 from telethon import TelegramClient
 from telethon.errors.rpcerrorlist import FloodWaitError, UsernameNotOccupiedError, UsernameInvalidError
-from telethon.tl.functions.channels import GetFullChannelRequest, GetMessagesRequest
+from telethon.tl.functions.channels import GetFullChannelRequest
+from tqdm import tqdm
 
 load_dotenv()
 
@@ -42,12 +43,13 @@ DP = Dispatcher(BOT)
 SESSION_NAME = "anon"
 CHECKED_CHANNELS, CANCELATION_FLAG = {}, {}
 REQUEST_COUNT = 0
+FILENAME = None
 
 class UserTrackingMiddleware(BaseMiddleware):
     async def on_pre_process_message(self, message: types.Message, data: dict):
         await add_user(message.from_user)
 
-# if the REQUEST_COUNT is 199 or more:
+# if the REQUEST_COUNT is 199 or more:@feedb4ck_test_bot
 class RequestLimitError(Exception):
     pass
 
@@ -63,10 +65,17 @@ if not USER_ID:
 
 @asynccontextmanager
 async def get_telethon_client():
+    global CANCELATION_FLAG
     logging.info("Getting Telethon client...")
     session_file_path = f"{SESSION_NAME}.session"
     telethon_client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
-    await telethon_client.start(bot_token=BOT_TOKEN)
+    try:
+        await telethon_client.start(bot_token=BOT_TOKEN)
+    except FloodWaitError as e:
+        logging.error(f"{e.message}:Waiting for {e.seconds}.")
+        
+        await asyncio.sleep(e.seconds)
+        raise e
 
     def signal_handler(sig, frame):
 
@@ -79,7 +88,8 @@ async def get_telethon_client():
     try:
         yield telethon_client
     except FloodWaitError as e:
-        logging.error(f"FloodWaitError: {e.seconds} seconds.")
+        logging.error(f"{e.message}:Waiting for {e.seconds}.")
+        
         await asyncio.sleep(e.seconds)
         raise e
     finally:
@@ -110,6 +120,7 @@ async def send_summary(chat_id: int, opened_comments: List[str], closed_comments
     logging.info("Sending summary...")
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("Opened", callback_data="opened"), InlineKeyboardButton("Closed", callback_data="closed"), InlineKeyboardButton("Errors", callback_data="errors"))
+    keyboard.add(InlineKeyboardButton("📄 View checked", callback_data="view_checked"), InlineKeyboardButton("📄 Unchecked Channels", callback_data="unchecked"))
     await BOT.send_message(
         chat_id=chat_id, 
         text=f"*Summary:*\n\n*Opened:* {len(opened_comments)}\n*Closed:* {len(closed_comments)}\n*Errors:* {len(errors)}", 
@@ -119,36 +130,30 @@ async def send_summary(chat_id: int, opened_comments: List[str], closed_comments
     logging.info("Finished sending summary.")
 
 
-async def send_channels_file(message: types.Message, filename: str, channels: List[dict]):
+async def send_channels_file(chat_id: int, channels: List[dict], filename: str):
     logging.info("Sending channels file...")
     with tempfile.NamedTemporaryFile(mode="w+t", delete=False) as f:
         for channel in channels:
+            if type(channel['username']) != int:
+                logging.warning(f"Invalid username: {channel['username']}")
+                continue
             f.write(
                 f"{channel['title']} ({channel['username']}): {channel['link']}\n")
         f.seek(0)
-        await BOT.send_document(chat_id=message.chat.id, document=InputFile(f), caption=filename)
+        await BOT.send_document(chat_id=chat_id, document=InputFile(f), caption=filename)
     os.unlink(f.name)
-    logging.info("Finished sending channels file.")
+
+    logging.info("Finished sending files.")
 
 async def handle_channel_processing(channel_username: str, telethon_client, opened_comments: dict, closed_comments: dict, errors: dict):
-    global REQUEST_COUNT
+    global REQUEST_COUNT, CANCELATION_FLAG
     sleep_time = None
     try:
         channel = await telethon_client.get_entity(channel_username)
         REQUEST_COUNT += 1
         if REQUEST_COUNT % 1 == 0:
-            sleep_time = 3
+            sleep_time = 4
             time.sleep(sleep_time)
-        elif REQUEST_COUNT % 31 == 0:
-            sleep_time = 60
-            date = "[{}]".format(datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
-            logging.info("%s. Sleeping for %s seconds to prevent flood wait...", date, sleep_time)
-            time.sleep(sleep_time)
-        elif REQUEST_COUNT % 199 == 0:
-            date = "[{}]".format(datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
-            logging.info("%s. Breaking the loop to prevent flood wait...", date)
-            raise RequestLimitError
-
         full_channel = await telethon_client(GetFullChannelRequest(channel))
         if full_channel.full_chat.linked_chat_id:
             opened_comments[channel_username] = channel
@@ -161,17 +166,17 @@ async def handle_channel_processing(channel_username: str, telethon_client, open
     except UsernameInvalidError:
         logging.warning("Invalid username: %s", channel_username)
         errors[channel_username] = "Invalid username"
-    except ValueError as error:
-        logging.warning("ValueError while processing %s: %s", channel_username, error)
-        errors[channel_username] = f"Error while processing {channel_username}: {error}"
-        logger.warning("Error while processing %s: %s", channel_username, error)
-    except FloodWaitError as error:
-        logging.error("FloodWaitError: %s seconds.", error.seconds)
-        await asyncio.sleep(error.seconds)
-        raise error
-    except Exception as error:
-        logging.error("Error while processing %s: %s", channel_username, error)
-        errors[channel_username] = f"Error while processing {channel_username}: {error}"
+    except ValueError as e:
+        logging.warning("ValueError while processing %s: %s", channel_username, e)
+        errors[channel_username] = f"Error while processing {channel_username}: {e}"
+    except FloodWaitError as e:
+        logging.error(f"{e.message}:Waiting for {e.seconds}.")
+        CANCELATION_FLAG = True
+        time.sleep(e.seconds)
+        raise e
+    except Exception as e:
+        logging.error("Error while processing %s: %s", channel_username, e)
+        errors[channel_username] = f"Error while processing {channel_username}: {e}"
 
 
 async def update_checked_channels(chat_id, channel_username, opened_comments, closed_comments, errors):
@@ -183,43 +188,48 @@ async def update_checked_channels(chat_id, channel_username, opened_comments, cl
         CHECKED_CHANNELS[chat_id]['errors'].append(channel_username)
 
 
+def save_unchecked_channels(channels):
+    with open(FILENAME or "channels.txt", 'w') as f:
+        for channel in channels: f.write(channel + '\n')
+
 async def check_channels(telethon_client, channels: List[str], message: types.Message):
+    global FILENAME
     opened_comments, closed_comments, errors = {}, {}, {}
     progress_message = await message.reply("Starting to check channels...")
     start_time = time.time()
-    sleep_time = get_sleep_time(len(channels))
     CHECKED_CHANNELS[message.chat.id] = {
         'opened_comments': [],
         'closed_comments': [],
         'errors': []
     }
-    logging.info(f"Checking {len(channels)} channels...")
-    for i, channel_username in enumerate(channels):
+    
+    if len(channels) > 200:
+        channels_to_check = list(channels)[:200]
+    else:
+        channels_to_check = channels
+    logging.info(f"Checking {len(channels_to_check)} channels...")
+    for i, channel_username in tqdm(enumerate(channels_to_check), total=len(channels_to_check)):
         if CANCELATION_FLAG.get(message.chat.id):
             logging.info("Canceled by user. Stopping checking channels.")
             CANCELATION_FLAG[message.chat.id] = False
+            save_unchecked_channels(channels)
             return opened_comments, closed_comments, errors
         if re.match(r"@[\w\d]+", channel_username):
-            print(f"\rChecked {i+1}/{len(channels)} channels", end="")
             await handle_channel_processing(channel_username, telethon_client, opened_comments, closed_comments, errors)
         else:
             logging.warning(f"Invalid username: {channel_username}")
             errors[channel_username] = "Invalid username"
 
-        await update_progress_message(i, len(channels), start_time, progress_message)
+        await update_progress_message(i, len(channels_to_check), start_time, progress_message)
         await update_checked_channels(message.chat.id, channel_username, opened_comments, closed_comments, errors)
-            
-            
-    
 
-    logging.info("Finished checking channels.")
+        # Remove checked channel from the original set
+        channels.remove(channel_username)
+
+    save_unchecked_channels(channels)
+        
+    logging.info("Finished checking channels.") 
     return opened_comments, closed_comments, errors
-
-
-class ChannelNotFoundError(Exception):
-    def __init__(self, username):
-        self.username = username
-        super().__init__(f"No user has {username} as username")
 
 
 async def track_user_middleware(event: types.Update, next_call):
@@ -238,19 +248,32 @@ latest_errors = {}
 async def cancel(callback_query: types.CallbackQuery):
     CANCELATION_FLAG[callback_query.message.chat.id] = True
 
+@DP.callback_query_handler(lambda c: c.data == 'unchecked')
+async def unchecked(callback_query: types.CallbackQuery):
+    global FILENAME
+    try:
+        if os.path.getsize(FILENAME) > 0:
+            await BOT.send_document(chat_id=callback_query.message.chat.id, document=InputFile(FILENAME), caption=FILENAME)
+    except FileNotFoundError:
+        logging.warning(f"File {FILENAME} not found")
+        await callback_query.message.reply("File with unchecked channels not found")
+
 @DP.message_handler(commands=['start', 'help'])
 async def start_help(message: types.Message):
     await message.reply(BANNER)
 
 @DP.callback_query_handler(lambda c: c.data == 'view_checked')
 async def view_checked(callback_query: types.CallbackQuery):
+    global FILENAME
     chat_id = callback_query.message.chat.id
-    username = callback_query.message.from_user.username
+    # FILENAME - .txt = filename
+    if FILENAME:
+        filename = FILENAME[:-4]
+    else:
+        filename = "checked_channels"
     if chat_id in CHECKED_CHANNELS:
-        
-        file_name = f"{username}_{datetime.now().strftime('%Y%m%d%H%M%S')}.txt"
 
-        with tempfile.NamedTemporaryFile(mode="w+t", delete=False, suffix=".txt", prefix=file_name) as f:
+        with tempfile.NamedTemporaryFile(mode="w+t", delete=False, prefix=f"{filename}", suffix=".txt") as f:
             f.write("opened:\n\n")
             f.write('\n'.join(CHECKED_CHANNELS[chat_id]['opened_comments']))
             f.write("\n\nclosed:\n\n")
@@ -276,7 +299,7 @@ async def show_opened(callback_query: types.CallbackQuery):
 
 
         if len(latest_opened[chat_id]) > 50:
-            with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".txt", prefix="opened_") as tmp:
                 tmp.write(
                     f"Channels with opened comments from the latest request:\n\n{opened_list}")
                 tmp.flush()
@@ -297,7 +320,7 @@ async def show_closed(callback_query: types.CallbackQuery):
         closed_list = "\n".join(f"- {username}" for username in latest_closed[chat_id])
 
         if len(latest_closed[chat_id]) > 50:
-            with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".txt", prefix="closed_") as tmp:
                 tmp.write(
                     f"Channels with closed comments from the latest request:\n\n{closed_list}")
                 tmp.flush()
@@ -318,7 +341,7 @@ async def show_errors(callback_query: types.CallbackQuery):
         errors_list = "\n".join(f"- {username}" for username in latest_errors[chat_id])
 
         if len(latest_errors[chat_id]) > 50:
-            with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".txt", prefix="errors_") as tmp:
                 tmp.write(f"Channel name does not exist:\n\n{errors_list}")
                 tmp.flush()
 
@@ -372,6 +395,8 @@ async def handle_text(message: types.Message):
 
 @DP.message_handler(content_types=['document'])
 async def handle_file(message: types.Message):
+    global FILENAME
+    FILENAME = message.document.file_name
     CANCELATION_FLAG[message.chat.id] = False
     document = message.document
     file_bytes = await BOT.download_file_by_id(document.file_id)
@@ -412,6 +437,9 @@ async def on_startup(dp):
 async def on_shutdown(dp):
     try:
         await BOT.close()
+        # delete FILENAME if exists
+        if FILENAME:
+            os.remove(FILENAME)
     except Exception as e:
         logging.error(f"Error while closing bot: {e}")
     finally:

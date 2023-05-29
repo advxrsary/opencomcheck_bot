@@ -40,25 +40,18 @@ def get_timestamp() -> str:
 
 def get_sleep_time(num_channels: int) -> int:
     logging.info("Getting sleep time...")
-    if num_channels <= 50:
-        return 10
-    elif num_channels <= 90:
+    if num_channels < 30:
         return 60
-    elif num_channels <= 150:
-        return 120
-    else:
-        return 200
+    elif num_channels < 90:
+        return 600
 
-async def update_progress_message(i: int, total: int, start_time: float, progress_message, sleep_time: int):
+async def update_progress_message(i: int, total: int, start_time: float, progress_message):
     elapsed_time = time.time() - start_time 
-    total_sleep_time = sleep_time * ((i + 1) // 30)  # Total sleep time is sleep_time for each group of 30 channels
-    total_time = elapsed_time + total_sleep_time
     channels_remaining = total - (i + 1)
-    estimated_time_remaining = (total_time / (i + 1)) * channels_remaining
+    estimated_time_remaining = (elapsed_time / (i + 1)) * channels_remaining
     estimated_minutes, estimated_seconds = divmod(estimated_time_remaining, 60)
     
     keyboard = generate_keyboard()
-
     await progress_message.edit_text(
         f"Checked {i + 1} out of {total} channels...\n"
         f"Estimated time remaining: {int(estimated_minutes)} minutes {int(estimated_seconds)} seconds",

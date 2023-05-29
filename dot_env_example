@@ -1,3 +1,11 @@
+DB_NAME=bot.db
 TELEGRAM_API_ID=your_telegram_api_id
 TELEGRAM_API_HASH=your_telegram_api_hash
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_USER_ID=your_telegram_user_id
+TELEGRAM_BOT_TOKEN1=your_telegram_bot_token
+TELEGRAM_BOT_TOKEN2=your_telegram_bot_token
+TELEGRAM_BOT_TOKEN3=your_telegram_bot_token
+...
+TELEGRAM_BOT_TOKEN8=your_telegram_bot_token
+TELEGRAM_BOT_TOKEN9=your_telegram_bot_token
+TELEGRAM_BOT_TOKEN10=your_telegram_bot_token

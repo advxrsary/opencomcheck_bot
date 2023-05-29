@@ -45,6 +45,10 @@ def get_sleep_time(num_channels: int) -> int:
     elif num_channels < 90:
         return 600
 
+def generate_progress_bar(current: int, total: int, length: int = 10) -> str:
+    progress = int(current / total * length)
+    return '▓' * progress + '░' * (length - progress)
+
 async def update_progress_message(i: int, total: int, start_time: float, progress_message):
     elapsed_time = time.time() - start_time 
     channels_remaining = total - (i + 1)
@@ -54,10 +58,10 @@ async def update_progress_message(i: int, total: int, start_time: float, progres
     keyboard = generate_keyboard()
     await progress_message.edit_text(
         f"Checked {i + 1} out of {total} channels...\n"
+        f"{generate_progress_bar(i + 1, total)}\n"
         f"Estimated time remaining: {int(estimated_minutes)} minutes {int(estimated_seconds)} seconds",
         reply_markup=keyboard  # Add the keyboard to the message
     )
-
 
 async def add_user(user: types.User):
     async with get_db() as db:
